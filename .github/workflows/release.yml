@@ -1,0 +1,85 @@
+# Release workflow for the majkel-hyggio/awscognito provider fork.
+#
+# The ONLY workflow in this repository. All upstream workflows were removed.
+# Runs ONLY when a tag matching v* is pushed. There is no workflow_dispatch,
+# no push-to-branch and no pull_request trigger.
+#
+#   1. provenance: proves the tag is upstream v6.54.0 + PR #48388 + release
+#      tooling only (.github/scripts/check-provenance.sh). No secrets.
+#   2. goreleaser: runs in the `release` environment (required reviewer),
+#      which holds GPG_PRIVATE_KEY and PASSPHRASE. Builds linux_amd64 and
+#      windows_amd64, signs SHA256SUMS and publishes the GitHub release that
+#      the Terraform Registry picks up.
+#
+# Based on hashicorp/terraform-provider-scaffolding-framework
+# (.github/workflows/release.yml @ 97f18e9). Actions are pinned to commit SHAs.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  provenance:
+    name: Provenance (upstream v6.54.0 + PR 48388 only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Check diff against upstream
+        run: bash .github/scripts/check-provenance.sh HEAD
+
+  goreleaser:
+    name: Build, sign and publish
+    needs: provenance
+    runs-on: ubuntu-latest
+    # A cold build of the AWS provider is slow and memory hungry.
+    timeout-minutes: 360
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Free disk space on the runner
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Allow goreleaser to access older tag information.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          # No cache in the release job: every release is built from scratch.
+          cache: false
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          # One target at a time to limit peak memory of the Go linker.
+          args: release --clean --parallelism 1
+        env:
+          # GitHub sets the GITHUB_TOKEN secret automatically.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

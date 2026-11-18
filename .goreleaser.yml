@@ -1,0 +1,67 @@
+# GoReleaser configuration for the majkel-hyggio/awscognito provider fork.
+# Based on hashicorp/terraform-provider-scaffolding-framework (.goreleaser.yml),
+# with these deliberate differences:
+#   - no `before.hooks: go mod tidy`: go.mod/go.sum must stay identical to upstream;
+#   - ldflags and flags as in the upstream build (.github/workflows/build.yml in v6.54.0);
+#   - only the platforms we need (each target is a very large build).
+# Docs: https://goreleaser.com/customization/  Registry requirements:
+# https://developer.hashicorp.com/terraform/registry/providers/publishing
+version: 2
+
+project_name: terraform-provider-awscognito
+
+builds:
+  - id: provider
+    main: .
+    binary: '{{ .ProjectName }}_v{{ .Version }}'
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - '-s -w -X github.com/hashicorp/terraform-provider-aws/version.ProviderVersion={{ .Version }}'
+    # Required: linux_amd64 (Bitbucket pipelines), windows_amd64 (developers).
+    # Optional, add only when needed: darwin/arm64 (Mac), linux/arm64.
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+
+archives:
+  - formats:
+      - zip
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  extra_files:
+    - glob: 'terraform-registry-manifest.json'
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    args:
+      - '--batch'
+      - '--local-user'
+      - '{{ .Env.GPG_FINGERPRINT }}'
+      - '--output'
+      - '${signature}'
+      - '--detach-sign'
+      - '${artifact}'
+
+release:
+  extra_files:
+    - glob: 'terraform-registry-manifest.json'
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+  # The Terraform Registry ignores draft releases; keep this false.
+  draft: false
+
+changelog:
+  disable: true
